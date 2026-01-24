@@ -8,6 +8,9 @@
 <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet" />
 <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
 
+<!-- ✅ Proj4 για auto μετατροπή ΕΓΣΑ87 -> WGS84 -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.9.0/proj4.js"></script>
+
 <style>
   body { margin: 0; padding: 0; font-family: Arial, Helvetica, sans-serif; }
   #map { position: absolute; top: 0; bottom: 0; width: 100%; }
@@ -37,7 +40,6 @@
     overflow-y: auto;
     box-shadow: 0 2px 6px rgba(0,0,0,0.25);
   }
-
   .layer-controls { margin-top:6px; padding:8px; background:#fafafa; border-radius:4px; display:none; }
   .layer-controls label { display:block; font-size:12px; margin-top:6px; }
   .layer-controls input[type="range"], .layer-controls select { width:100%; margin-top:4px; }
@@ -61,13 +63,29 @@
     min-height: 100px;
   }
 
-  .legend-header { margin-bottom: 16px; padding-bottom: 12px; border-bottom: 2px solid #333; }
-  .legend-map-title { font-size: 15px; font-weight: 700; color: #000; margin-bottom: 10px; line-height: 1.4; text-align: center; }
-  .legend-author { font-size: 10px; color: #555; line-height: 1.4; text-align: left; }
+  .legend-header {
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 2px solid #333;
+  }
+  .legend-map-title {
+    font-size: 15px;
+    font-weight: 700;
+    color: #000;
+    margin-bottom: 10px;
+    line-height: 1.4;
+    text-align: center;
+  }
+  .legend-author {
+    font-size: 10px;
+    color: #555;
+    line-height: 1.4;
+    text-align: left;
+  }
   .legend-author strong { font-weight: 700; }
 
   .legend-row { display:flex; align-items:center; margin-bottom:8px; }
-  .legend-color { width:20px; height:20px; margin-right:8px; border-radius:3px; flex:none; border: 1px solid rgba(0,0,0,0.12); }
+  .legend-color { width:20px; height:20px; margin-right:8px; border-radius:3px; flex:none; border: 1px solid rgba(0,0,0,0.15); }
   .legend-line { width:40px; height:14px; margin-right:8px; flex:none; }
   .legend-title { font-weight:700; margin-bottom:8px; display:block; }
   .control-value { font-weight:700; margin-left:6px; color:#333; }
@@ -109,20 +127,33 @@
     <label>Opacity: <span id="popdensOpacityLabel" class="control-value">60%</span>
       <input type="range" id="popdensOpacity" min="0" max="100" value="60">
     </label>
-    <small style="display:block;margin-top:6px;color:#555">
-      Outline is added automatically for visibility.
-    </small>
   </div>
   <hr>
 
-  <!-- ✅ FIXED: Dasymmetric layer is categorical (COVER/COVER_CODE), not numeric DENS_COVER -->
-  <input type="checkbox" id="denscoverToggle"> <strong>Land cover zones (Dasymetric base)</strong><br>
+  <input type="checkbox" id="denscoverToggle"> <strong>Population Density / Land cover (Dasymmetric)</strong><br>
   <div class="layer-controls" id="denscoverControls">
+    <label>Classification method:
+      <select id="denscoverClassificationMethod">
+        <option value="equal" selected>Equal interval (default)</option>
+        <option value="quantile">Quantiles</option>
+        <option value="natural">Natural breaks (Jenks)</option>
+        <option value="custom">Custom intervals</option>
+      </select>
+    </label>
+    <label id="denscoverNumClassesLabel">Number of classes:
+      <select id="denscoverNumClasses">
+        <option value="3">3</option>
+        <option value="4">4</option>
+        <option value="5" selected>5</option>
+        <option value="6">6</option>
+        <option value="7">7</option>
+      </select>
+    </label>
     <label>Opacity: <span id="denscoverOpacityLabel" class="control-value">60%</span>
       <input type="range" id="denscoverOpacity" min="0" max="100" value="60">
     </label>
     <small style="display:block;margin-top:6px;color:#555">
-      Styled by <code>COVER_CODE</code> (categories). If you later create a numeric <code>DENS_COVER</code>, tell me and we revert to classification.
+      Αν δεν υπάρχει πεδίο DENS_COVER, θα εμφανιστεί κατηγοριοποίηση land cover (COVER_CODE).
     </small>
   </div>
   <hr>
@@ -135,9 +166,6 @@
     <label>Opacity (circles): <span id="poipopOpacityLabel" class="control-value">25%</span>
       <input type="range" id="poipopOpacity" min="0" max="100" value="25">
     </label>
-    <small style="display:block;margin-top:6px;color:#555">
-      <strong>Note:</strong> Flannery scaling is used for perceptual equality.
-    </small>
   </div>
   <hr>
 
@@ -171,10 +199,7 @@
   <div style="font-size:12px;color:#555">
     <strong>Data notes</strong><br>
     - GeoJSONs in <code>data/</code><br>
-    - Choropleth field: <code>POPDENS</code><br>
-    - Proportional symbols field: <code>POPMUN</code><br>
-    - Dasymetric base fields: <code>COVER</code>, <code>COVER_CODE</code><br>
-    - Contours use <code>ID</code>
+    - Προσοχή: Αν κάποια είναι σε ΕΓΣΑ87, γίνεται auto μετατροπή.<br>
   </div>
 </div>
 
@@ -183,23 +208,22 @@
 
 <script>
 // ============================================================
+// 0. PROJ4 defs: EGSA87 (EPSG:2100) -> WGS84 (EPSG:4326)
+// ============================================================
+proj4.defs("EPSG:2100","+proj=tmerc +lat_0=0 +lon_0=24 +k=0.9996 +x_0=500000 +y_0=0 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs");
+proj4.defs("EPSG:4326","+proj=longlat +datum=WGS84 +no_defs");
+
+// ============================================================
 // 1. MAP INITIALIZATION
 // ============================================================
 const map = new maplibregl.Map({
   container: 'map',
   style: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
-  center: [22.45, 39.45], // Thessaly (approx center)
+  center: [22.45, 39.45],
   zoom: 8.2
 });
-
-function addBaseControls() {
-  // Avoid duplicates when switching style
-  const existing = map._controls || [];
-  // MapLibre doesn't provide easy getter; safe re-add is fine in most cases, but we try to keep it simple:
-  map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-right');
-  map.addControl(new maplibregl.ScaleControl({ maxWidth: 120, unit: 'metric' }), 'bottom-left');
-}
-addBaseControls();
+map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-right');
+map.addControl(new maplibregl.ScaleControl({ maxWidth: 120, unit: 'metric' }), 'bottom-left');
 
 // ============================================================
 // 2. DATA CONFIGURATION
@@ -208,18 +232,14 @@ const layerDefinitions = {
   popdens: {
     sourceId: 'popdens-src',
     layerId: 'popdens-layer',
-    outlineLayerId: 'popdens-outline',
     url: 'data/dens.geojson',
-    dataField: 'POPDENS'
+    dataField: 'POPDENS' // θα γίνει auto-detect αν δεν υπάρχει
   },
-  // ✅ FIXED HERE
   denscover: {
     sourceId: 'denscover-src',
     layerId: 'denscover-layer',
-    outlineLayerId: 'denscover-outline',
     url: 'data/dasimetriko.geojson',
-    dataField: 'COVER_CODE',    // ✅ was DENS_COVER
-    labelField: 'COVER'         // ✅ for legend labels (if exists)
+    dataField: 'DENS_COVER' // αν δεν υπάρχει, θα πάει σε COVER_CODE categories
   },
   poipop: {
     sourceId: 'poipop-src',
@@ -258,7 +278,92 @@ const enabledLayers = {
 };
 
 // ============================================================
-// 3. COLOR SCHEMES (choropleth)
+// Helpers: bbox + detect CRS + reproject
+// ============================================================
+function walkCoords(coords, cb){
+  if (typeof coords[0] === 'number') return cb(coords);
+  for (const c of coords) walkCoords(c, cb);
+}
+function getFirstCoord(geojson){
+  let found = null;
+  walkCoords(geojson.features[0].geometry.coordinates, (xy) => { if(!found) found = xy; });
+  return found;
+}
+function seemsProjectedXY(xy){
+  if (!xy) return false;
+  const [x,y]=xy;
+  // lon/lat ranges: |lon|<=180, |lat|<=90
+  return (Math.abs(x) > 200 || Math.abs(y) > 100);
+}
+function reprojectGeoJSON_EGSA87_to_WGS84(gj){
+  const out = JSON.parse(JSON.stringify(gj));
+  for (const f of out.features){
+    walkCoords(f.geometry.coordinates, (xy) => {
+      const [x,y] = xy;
+      const ll = proj4("EPSG:2100","EPSG:4326",[x,y]);
+      xy[0]=ll[0]; xy[1]=ll[1];
+    });
+  }
+  // καθάρισε crs
+  delete out.crs;
+  return out;
+}
+function fitToGeoJSON(gj){
+  let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+  for (const f of gj.features){
+    walkCoords(f.geometry.coordinates, ([x,y])=>{
+      if (x<minX) minX=x;
+      if (y<minY) minY=y;
+      if (x>maxX) maxX=x;
+      if (y>maxY) maxY=y;
+    });
+  }
+  if (isFinite(minX)) {
+    map.fitBounds([[minX,minY],[maxX,maxY]], { padding: 40, duration: 800 });
+  }
+}
+
+function listFields(gj){
+  const p = gj.features?.[0]?.properties || {};
+  return Object.keys(p);
+}
+function pickNumericField(gj, preferredList=[]){
+  const fields = listFields(gj);
+  for (const k of preferredList){
+    if (fields.includes(k)) return k;
+  }
+  // βρες πρώτο numeric πεδίο
+  for (const k of fields){
+    const v = gj.features[0].properties[k];
+    const n = parseFloat(v);
+    if (v !== null && v !== undefined && !Number.isNaN(n) && Number.isFinite(n)) return k;
+  }
+  return null;
+}
+
+async function fetchGeoJSONSmart(url){
+  const r = await fetch(url);
+  const gj = await r.json();
+
+  // auto reproject αν μοιάζει ΕΓΣΑ87
+  const first = getFirstCoord(gj);
+  if (seemsProjectedXY(first)){
+    console.warn("Detected projected coords (likely EGSA87). Reprojecting:", url, first);
+    return reprojectGeoJSON_EGSA87_to_WGS84(gj);
+  }
+  return gj;
+}
+
+function ensureSource(id, urlOrGeojson) {
+  if (!map.getSource(id)) {
+    map.addSource(id, { type: 'geojson', data: urlOrGeojson });
+  } else {
+    if (typeof urlOrGeojson === 'object') map.getSource(id).setData(urlOrGeojson);
+  }
+}
+
+// ============================================================
+// 3. Color schemes
 // ============================================================
 const colorSchemes = {
   3: ['#ffcccc', '#ff6666', '#990000'],
@@ -267,12 +372,16 @@ const colorSchemes = {
   6: ['#ffcccc', '#ff9999', '#ff6666', '#ff3333', '#cc0000', '#990000'],
   7: ['#ffcccc', '#ff9999', '#ff6666', '#ff3333', '#ff0000', '#cc0000', '#990000']
 };
+const denscoverColorSchemes = colorSchemes;
 
 const customBreaks = [30, 75, 150, 300, 600];
 const customColors = ['#ffcccc', '#ff9999', '#ff6666', '#cc0000', '#990000', '#660000'];
 
+const denscoverCustomBreaks = [500, 1500, 3500, 6000, 8500];
+const denscoverCustomColors = ['#ffcccc', '#ff9999', '#ff6666', '#cc0000', '#990000', '#660000'];
+
 // ============================================================
-// 4. CLASSIFICATION FUNCTIONS (choropleth only)
+// 4. Classification
 // ============================================================
 function equalIntervalBreaks(sorted, n) {
   const min = sorted[0];
@@ -344,34 +453,38 @@ function calculateBreaks(values, numClasses, method, customBreaksArray) {
   return equalIntervalBreaks(sorted, numClasses);
 }
 function createStepExpression(breaks, colors, field) {
-  const expr = ['step', ['get', field], colors[0]];
+  const expr = ['step', ['to-number', ['get', field]], colors[0]];
   for (let i = 0; i < breaks.length; i++) {
     expr.push(breaks[i]);
     expr.push(colors[i + 1] || colors[colors.length - 1]);
   }
   return expr;
 }
-function ensureSource(id, urlOrGeojson) {
-  if (!map.getSource(id)) {
-    map.addSource(id, { type: 'geojson', data: urlOrGeojson });
-  } else {
-    if (typeof urlOrGeojson === 'object') map.getSource(id).setData(urlOrGeojson);
-  }
+
+// ============================================================
+// 5. LAYERS
+// ============================================================
+
+function safeAlertMissingField(layerName, wantedField, gj){
+  const fields = listFields(gj);
+  alert(`⚠️ Δεν βρέθηκε αριθμητικό πεδίο για ταξινόμηση.\nLayer: ${layerName}\nΖητούμενο: "${wantedField}"\nΔιαθέσιμα πεδία:\n${fields.join(", ")}`);
 }
 
-// ============================================================
-// 5. LAYER LOADING
-// ============================================================
-
-// --------- Choropleth (numeric POPDENS) ----------
 function applyPopDensClassification() {
   if (!popdensData) return;
+
+  // auto-detect field αν λείπει POPDENS
+  const detected = pickNumericField(popdensData, ['POPDENS','DENS','DENSITY','POP_DENS','popdens']);
+  if (!detected){
+    safeAlertMissingField("popdens", layerDefinitions.popdens.dataField, popdensData);
+    return;
+  }
+  layerDefinitions.popdens.dataField = detected;
 
   const method = document.getElementById('classificationMethod').value;
   const nclasses = parseInt(document.getElementById('numClasses').value, 10);
 
   let colors, breaks;
-
   if (method === 'custom') {
     breaks = customBreaks;
     colors = customColors;
@@ -381,10 +494,14 @@ function applyPopDensClassification() {
     breaks = calculateBreaks(values, nclasses, method, null);
   }
 
+  if (!breaks.length){
+    safeAlertMissingField("popdens", layerDefinitions.popdens.dataField, popdensData);
+    return;
+  }
+
   const expr = createStepExpression(breaks, colors, layerDefinitions.popdens.dataField);
   ensureSource(layerDefinitions.popdens.sourceId, popdensData);
 
-  // fill
   if (map.getLayer(layerDefinitions.popdens.layerId)) {
     map.setPaintProperty(layerDefinitions.popdens.layerId, 'fill-color', expr);
   } else {
@@ -399,271 +516,293 @@ function applyPopDensClassification() {
     });
   }
 
-  // outline for visibility
-  if (!map.getLayer(layerDefinitions.popdens.outlineLayerId)) {
-    map.addLayer({
-      id: layerDefinitions.popdens.outlineLayerId,
-      type: 'line',
-      source: layerDefinitions.popdens.sourceId,
-      paint: {
-        'line-color': 'rgba(255,255,255,0.35)',
-        'line-width': 0.6
-      }
-    });
-  }
-
   layerDefinitions.popdens.breaks = breaks;
   layerDefinitions.popdens.colors = colors;
   enabledLayers.popdens = true;
   document.getElementById('popdensControls').style.display = 'block';
   updateLegend();
 }
-function loadPopDensLayer() {
-  fetch(layerDefinitions.popdens.url)
-    .then(r => r.json())
-    .then(gj => { popdensData = gj; applyPopDensClassification(); })
-    .catch(err => { console.error(err); alert('Error loading dens.geojson (POPDENS).'); });
-}
 
-// --------- Dasymetric base (categorical COVER_CODE/COVER) ----------
-const denscoverPalette = [
-  '#fef0d9','#fdcc8a','#fc8d59','#e34a33','#b30000',
-  '#d9f0a3','#addd8e','#78c679','#41ab5d','#006837',
-  '#deebf7','#9ecae1','#6baed6','#3182bd','#08519c',
-  '#f2f0f7','#cbc9e2','#9e9ac8','#756bb1','#54278f'
-];
-
-function buildDensCoverColorMap(geojson) {
-  // Unique category codes
-  const fieldCode = layerDefinitions.denscover.dataField;   // COVER_CODE
-  const fieldLabel = layerDefinitions.denscover.labelField; // COVER (optional)
-
-  const mapByCode = new Map(); // code -> {label, color}
-  for (const f of geojson.features) {
-    const code = f?.properties?.[fieldCode];
-    if (code === undefined || code === null) continue;
-    if (!mapByCode.has(code)) {
-      const label = (fieldLabel && f.properties[fieldLabel] != null) ? String(f.properties[fieldLabel]) : String(code);
-      mapByCode.set(code, { label, color: null });
-    }
+async function loadPopDensLayer() {
+  try {
+    popdensData = await fetchGeoJSONSmart(layerDefinitions.popdens.url);
+    applyPopDensClassification();
+    // fit αν είναι το πρώτο layer που ανοίγεις
+    fitToGeoJSON(popdensData);
+  } catch (err) {
+    console.error(err);
+    alert('Error loading data/dens.geojson');
   }
-
-  const codes = Array.from(mapByCode.keys()).sort((a,b) => {
-    const na = Number(a), nb = Number(b);
-    if (!isNaN(na) && !isNaN(nb)) return na - nb;
-    return String(a).localeCompare(String(b));
-  });
-
-  codes.forEach((code, i) => {
-    const entry = mapByCode.get(code);
-    entry.color = denscoverPalette[i % denscoverPalette.length];
-  });
-
-  return { mapByCode, codes };
 }
 
-function applyDensCoverCategorical() {
+// ---- denscover: αν έχει DENS_COVER => numeric choropleth, αλλιώς categories COVER_CODE
+let denscoverIsCategorical = false;
+
+function applyDensCoverClassification() {
   if (!denscoverData) return;
 
-  const { mapByCode, codes } = buildDensCoverColorMap(denscoverData);
+  const numericField = pickNumericField(denscoverData, ['DENS_COVER','DENS','DENSITY']);
+  denscoverIsCategorical = !numericField;
 
-  // MapLibre "match" expression: match(get(COVER_CODE), code1,color1, code2,color2, default)
-  const expr = ['match', ['get', layerDefinitions.denscover.dataField]];
-  for (const code of codes) {
-    const { color } = mapByCode.get(code);
-    // Keep type: if numeric codes, pass number; if string, pass string
-    const num = Number(code);
-    const key = (!isNaN(num) && String(num) === String(code)) ? num : code;
-    expr.push(key, color);
-  }
-  expr.push('#cccccc'); // default
+  if (!denscoverIsCategorical){
+    layerDefinitions.denscover.dataField = numericField;
 
-  ensureSource(layerDefinitions.denscover.sourceId, denscoverData);
+    const method = document.getElementById('denscoverClassificationMethod').value;
+    const nclasses = parseInt(document.getElementById('denscoverNumClasses').value, 10);
 
-  if (map.getLayer(layerDefinitions.denscover.layerId)) {
-    map.setPaintProperty(layerDefinitions.denscover.layerId, 'fill-color', expr);
+    let colors, breaks;
+    if (method === 'custom') {
+      breaks = denscoverCustomBreaks;
+      colors = denscoverCustomColors;
+    } else {
+      colors = denscoverColorSchemes[nclasses] || denscoverColorSchemes[5];
+      const values = denscoverData.features.map(f => parseFloat(f.properties[layerDefinitions.denscover.dataField]));
+      breaks = calculateBreaks(values, nclasses, method, null);
+    }
+
+    if (!breaks.length){
+      safeAlertMissingField("denscover", layerDefinitions.denscover.dataField, denscoverData);
+      return;
+    }
+
+    const expr = createStepExpression(breaks, colors, layerDefinitions.denscover.dataField);
+    ensureSource(layerDefinitions.denscover.sourceId, denscoverData);
+
+    if (map.getLayer(layerDefinitions.denscover.layerId)) {
+      map.setPaintProperty(layerDefinitions.denscover.layerId, 'fill-color', expr);
+    } else {
+      // βάλε το πάνω από popdens αν υπάρχει
+      const beforeId = map.getLayer(layerDefinitions.poipop.layerId) ? layerDefinitions.poipop.layerId : undefined;
+      map.addLayer({
+        id: layerDefinitions.denscover.layerId,
+        type: 'fill',
+        source: layerDefinitions.denscover.sourceId,
+        paint: {
+          'fill-color': expr,
+          'fill-opacity': parseInt(document.getElementById('denscoverOpacity').value, 10) / 100
+        }
+      }, beforeId);
+    }
+
+    layerDefinitions.denscover.breaks = breaks;
+    layerDefinitions.denscover.colors = colors;
   } else {
-    map.addLayer({
-      id: layerDefinitions.denscover.layerId,
-      type: 'fill',
-      source: layerDefinitions.denscover.sourceId,
-      paint: {
-        'fill-color': expr,
-        'fill-opacity': parseInt(document.getElementById('denscoverOpacity').value, 10) / 100
-      }
-    });
-  }
+    // categorical cover
+    const fields = listFields(denscoverData);
+    const codeField = fields.includes('COVER_CODE') ? 'COVER_CODE' : fields[0];
 
-  // outline for visibility
-  if (!map.getLayer(layerDefinitions.denscover.outlineLayerId)) {
-    map.addLayer({
-      id: layerDefinitions.denscover.outlineLayerId,
-      type: 'line',
-      source: layerDefinitions.denscover.sourceId,
-      paint: {
-        'line-color': 'rgba(255,255,255,0.25)',
-        'line-width': 0.5
-      }
-    });
-  }
+    const uniq = new Set();
+    for (const f of denscoverData.features){
+      const v = f.properties?.[codeField];
+      if (v !== undefined && v !== null) uniq.add(String(v));
+    }
+    const values = Array.from(uniq).sort();
 
-  // store for legend
-  layerDefinitions.denscover.isCategorical = true;
-  layerDefinitions.denscover.categoryMap = mapByCode;
-  layerDefinitions.denscover.categoryCodes = codes;
+    // palette
+    const palette = ['#fef0d9','#fdcc8a','#fc8d59','#e34a33','#b30000','#8856a7','#2ca25f','#3182bd','#756bb1','#31a354'];
+    const matchExpr = ['match', ['to-string', ['get', codeField]]];
+    values.forEach((v,i)=>{ matchExpr.push(v); matchExpr.push(palette[i % palette.length]); });
+    matchExpr.push('#cccccc');
+
+    ensureSource(layerDefinitions.denscover.sourceId, denscoverData);
+
+    if (!map.getLayer(layerDefinitions.denscover.layerId)) {
+      map.addLayer({
+        id: layerDefinitions.denscover.layerId,
+        type: 'fill',
+        source: layerDefinitions.denscover.sourceId,
+        paint: {
+          'fill-color': matchExpr,
+          'fill-opacity': parseInt(document.getElementById('denscoverOpacity').value, 10) / 100
+        }
+      });
+    } else {
+      map.setPaintProperty(layerDefinitions.denscover.layerId, 'fill-color', matchExpr);
+    }
+
+    layerDefinitions.denscover.categorical = { field: codeField, values, palette };
+    delete layerDefinitions.denscover.breaks;
+    delete layerDefinitions.denscover.colors;
+  }
 
   enabledLayers.denscover = true;
   document.getElementById('denscoverControls').style.display = 'block';
   updateLegend();
 }
 
-function loadDensCoverLayer() {
-  fetch(layerDefinitions.denscover.url)
-    .then(r => r.json())
-    .then(gj => { denscoverData = gj; applyDensCoverCategorical(); })
-    .catch(err => { console.error(err); alert('Error loading dasimetriko.geojson.'); });
+async function loadDensCoverLayer() {
+  try {
+    denscoverData = await fetchGeoJSONSmart(layerDefinitions.denscover.url);
+    applyDensCoverClassification();
+    fitToGeoJSON(denscoverData);
+  } catch (err) {
+    console.error(err);
+    alert('Error loading data/dasimetriko.geojson');
+  }
 }
 
-// --------- Proportional symbols ----------
-function loadPoipopLayer() {
+async function loadPoipopLayer() {
   const def = layerDefinitions.poipop;
-  fetch(def.url)
-    .then(r => r.json())
-    .then(geojson => {
-      geojson.features.sort((a, b) => {
-        const valA = parseFloat(a.properties[def.dataField]) || 0;
-        const valB = parseFloat(b.properties[def.dataField]) || 0;
-        return valB - valA;
+  try {
+    const geojson = await fetchGeoJSONSmart(def.url);
+
+    geojson.features.sort((a, b) => {
+      const valA = parseFloat(a.properties?.[def.dataField]) || 0;
+      const valB = parseFloat(b.properties?.[def.dataField]) || 0;
+      return valB - valA;
+    });
+
+    ensureSource(def.sourceId, geojson);
+
+    const maxR = parseInt(document.getElementById('maxRadius').value, 10);
+    const vL = def.maxValueApprox || 150000;
+    const radiusExpr = ['*', ['^', ['/', ['to-number', ['get', def.dataField]], vL], 0.57], maxR];
+
+    if (!map.getLayer(def.layerId)) {
+      map.addLayer({
+        id: def.layerId,
+        type: 'circle',
+        source: def.sourceId,
+        paint: {
+          'circle-color': 'rgba(255,0,0,0.25)',
+          'circle-radius': radiusExpr,
+          'circle-opacity': parseInt(document.getElementById('poipopOpacity').value, 10) / 100,
+          'circle-stroke-color': 'red',
+          'circle-stroke-width': 0.8
+        }
       });
+    } else {
+      map.setPaintProperty(def.layerId, 'circle-radius', radiusExpr);
+      map.setPaintProperty(def.layerId, 'circle-opacity', parseInt(document.getElementById('poipopOpacity').value, 10) / 100);
+    }
 
-      ensureSource(def.sourceId, geojson);
-
-      const maxR = parseInt(document.getElementById('maxRadius').value, 10);
-      const vL = def.maxValueApprox || 150000;
-      const radiusExpr = ['*', ['^', ['/', ['get', def.dataField], vL], 0.57], maxR];
-
-      if (!map.getLayer(def.layerId)) {
-        map.addLayer({
-          id: def.layerId,
-          type: 'circle',
-          source: def.sourceId,
-          paint: {
-            'circle-color': 'rgba(255,0,0,0.25)',
-            'circle-radius': radiusExpr,
-            'circle-opacity': parseInt(document.getElementById('poipopOpacity').value, 10) / 100,
-            'circle-stroke-color': 'red',
-            'circle-stroke-width': 0.8
-          }
-        });
-      } else {
-        map.setPaintProperty(def.layerId, 'circle-radius', radiusExpr);
-        map.setPaintProperty(def.layerId, 'circle-opacity', parseInt(document.getElementById('poipopOpacity').value, 10) / 100);
-      }
-
-      enabledLayers.poipop = true;
-      document.getElementById('poipopControls').style.display = 'block';
-      updateLegend();
-    })
-    .catch(err => { console.error(err); alert('Error loading dimoipop91_21.geojson (POPMUN).'); });
+    enabledLayers.poipop = true;
+    document.getElementById('poipopControls').style.display = 'block';
+    updateLegend();
+    fitToGeoJSON(geojson);
+  } catch (err) {
+    console.error(err);
+    alert('Error loading proportional symbols geojson.');
+  }
 }
+
 function updatePoipopRadius() {
   const def = layerDefinitions.poipop;
   if (!map.getLayer(def.layerId)) return;
+
   const maxR = parseInt(document.getElementById('maxRadius').value, 10);
   const vL = def.maxValueApprox || 150000;
-  const radiusExpr = ['*', ['^', ['/', ['get', def.dataField], vL], 0.57], maxR];
+  const radiusExpr = ['*', ['^', ['/', ['to-number', ['get', def.dataField]], vL], 0.57], maxR];
+
   map.setPaintProperty(def.layerId, 'circle-radius', radiusExpr);
   updateLegend();
 }
 
-// --------- Contours ----------
-function loadContoursLayer() {
+async function loadContoursLayer() {
   const def = layerDefinitions.contours;
-  ensureSource(def.sourceId, def.url);
+  try {
+    const gj = await fetchGeoJSONSmart(def.url);
+    ensureSource(def.sourceId, gj);
 
-  const widthExpr = ['case', ['==', ['get', 'ID'], 1], 3, 1.2];
-  const color = '#8B0000';
+    const widthExpr = ['case', ['==', ['to-number', ['get', 'ID']], 1], 3, 1.2];
+    const color = '#8B0000';
 
-  if (!map.getLayer(def.layerId)) {
-    map.addLayer({
-      id: def.layerId,
-      type: 'line',
-      source: def.sourceId,
-      paint: {
-        'line-color': color,
-        'line-width': widthExpr,
-        'line-opacity': parseInt(document.getElementById('contoursOpacity').value, 10) / 100
-      }
-    });
-  } else {
-    map.setPaintProperty(def.layerId, 'line-width', widthExpr);
-    map.setPaintProperty(def.layerId, 'line-opacity', parseInt(document.getElementById('contoursOpacity').value, 10) / 100);
+    if (!map.getLayer(def.layerId)) {
+      map.addLayer({
+        id: def.layerId,
+        type: 'line',
+        source: def.sourceId,
+        paint: {
+          'line-color': color,
+          'line-width': widthExpr,
+          'line-opacity': parseInt(document.getElementById('contoursOpacity').value, 10) / 100
+        }
+      });
+    } else {
+      map.setPaintProperty(def.layerId, 'line-width', widthExpr);
+      map.setPaintProperty(def.layerId, 'line-opacity', parseInt(document.getElementById('contoursOpacity').value, 10) / 100);
+    }
+
+    enabledLayers.contours = true;
+    document.getElementById('contoursControls').style.display = 'block';
+    updateLegend();
+    fitToGeoJSON(gj);
+  } catch (err) {
+    console.error(err);
+    alert('Error loading contours geojson.');
   }
-
-  enabledLayers.contours = true;
-  document.getElementById('contoursControls').style.display = 'block';
-  updateLegend();
 }
 
-// --------- Dots ----------
-function loadDotsLayer() {
+async function loadDotsLayer() {
   const def = layerDefinitions.dots;
-  ensureSource(def.sourceId, def.url);
+  try {
+    const gj = await fetchGeoJSONSmart(def.url);
+    ensureSource(def.sourceId, gj);
 
-  const dotSize = parseFloat(document.getElementById('dotSize').value);
-  const opacity = parseInt(document.getElementById('dotsOpacity').value, 10) / 100;
+    const dotSize = parseFloat(document.getElementById('dotSize').value);
+    const opacity = parseInt(document.getElementById('dotsOpacity').value, 10) / 100;
 
-  if (!map.getLayer(def.layerId)) {
-    map.addLayer({
-      id: def.layerId,
-      type: 'circle',
-      source: def.sourceId,
-      paint: {
-        'circle-color': '#ff0000',
-        'circle-radius': dotSize,
-        'circle-opacity': opacity
-      }
-    });
-  } else {
-    map.setPaintProperty(def.layerId, 'circle-radius', dotSize);
-    map.setPaintProperty(def.layerId, 'circle-opacity', opacity);
+    if (!map.getLayer(def.layerId)) {
+      map.addLayer({
+        id: def.layerId,
+        type: 'circle',
+        source: def.sourceId,
+        paint: {
+          'circle-color': '#ff0000',
+          'circle-radius': dotSize,
+          'circle-opacity': opacity
+        }
+      });
+    } else {
+      map.setPaintProperty(def.layerId, 'circle-radius', dotSize);
+      map.setPaintProperty(def.layerId, 'circle-opacity', opacity);
+    }
+
+    enabledLayers.dots = true;
+    document.getElementById('dotsControls').style.display = 'block';
+    updateLegend();
+    fitToGeoJSON(gj);
+  } catch (err) {
+    console.error(err);
+    alert('Error loading dot density geojson.');
   }
-
-  enabledLayers.dots = true;
-  document.getElementById('dotsControls').style.display = 'block';
-  updateLegend();
 }
 
-// --------- Boundaries ----------
-function loadBoundariesLayer() {
+async function loadBoundariesLayer() {
   const def = layerDefinitions.boundaries;
-  ensureSource(def.sourceId, def.url);
+  try {
+    const gj = await fetchGeoJSONSmart(def.url);
+    ensureSource(def.sourceId, gj);
 
-  if (!map.getLayer(def.layerId)) {
-    map.addLayer({
-      id: def.layerId,
-      type: 'line',
-      source: def.sourceId,
-      paint: {
-        'line-color': '#bbbbbb',
-        'line-width': 1,
-        'line-opacity': parseInt(document.getElementById('boundariesOpacity').value, 10) / 100
-      }
-    });
-  } else {
-    map.setPaintProperty(def.layerId, 'line-opacity', parseInt(document.getElementById('boundariesOpacity').value, 10) / 100);
+    if (!map.getLayer(def.layerId)) {
+      // boundaries πάνω-πάνω
+      map.addLayer({
+        id: def.layerId,
+        type: 'line',
+        source: def.sourceId,
+        paint: {
+          'line-color': '#bbbbbb',
+          'line-width': 1,
+          'line-opacity': parseInt(document.getElementById('boundariesOpacity').value, 10) / 100
+        }
+      });
+    } else {
+      map.setPaintProperty(def.layerId, 'line-opacity', parseInt(document.getElementById('boundariesOpacity').value, 10) / 100);
+    }
+
+    enabledLayers.boundaries = true;
+    document.getElementById('boundariesControls').style.display = 'block';
+    updateLegend();
+    fitToGeoJSON(gj);
+  } catch (err) {
+    console.error(err);
+    alert('Error loading boundaries geojson.');
   }
-
-  enabledLayers.boundaries = true;
-  document.getElementById('boundariesControls').style.display = 'block';
-  updateLegend();
 }
 
-// --------- Remove ----------
 function removeLayer(name) {
   const def = layerDefinitions[name];
   if (map.getLayer(def.layerId)) map.removeLayer(def.layerId);
-  if (def.outlineLayerId && map.getLayer(def.outlineLayerId)) map.removeLayer(def.outlineLayerId);
   if (map.getSource(def.sourceId)) map.removeSource(def.sourceId);
   enabledLayers[name] = false;
   const c = document.getElementById(name + 'Controls');
@@ -693,7 +832,6 @@ function updateLegend() {
     </div>
   `;
 
-  // Choropleth legend
   if (enabledLayers.popdens && layerDefinitions.popdens.breaks) {
     const breaks = layerDefinitions.popdens.breaks;
     const colors = layerDefinitions.popdens.colors;
@@ -706,92 +844,48 @@ function updateLegend() {
     html += '<hr>';
   }
 
-  // ✅ Dasymetric base legend (categorical)
-  if (enabledLayers.denscover && layerDefinitions.denscover.isCategorical && layerDefinitions.denscover.categoryMap) {
-    html += `<div class="legend-title">Dasymetric base (land cover categories)</div>`;
-    const codes = layerDefinitions.denscover.categoryCodes || [];
-    const cmap = layerDefinitions.denscover.categoryMap;
-
-    // show up to 12 categories to keep legend readable (adjust if you want)
-    const maxShow = 12;
-    const showCodes = codes.slice(0, maxShow);
-
-    for (const code of showCodes) {
-      const { label, color } = cmap.get(code);
-      html += `<div class="legend-row"><div class="legend-color" style="background:${color}"></div><div>${label} <span style="color:#888">(${code})</span></div></div>`;
+  if (enabledLayers.denscover) {
+    if (!denscoverIsCategorical && layerDefinitions.denscover.breaks) {
+      const breaks = layerDefinitions.denscover.breaks;
+      const colors = layerDefinitions.denscover.colors;
+      html += `<div class="legend-title">Dasymmetric (people / km²)</div>`;
+      html += `<div class="legend-row"><div class="legend-color" style="background:${colors[0]}"></div><div>&lt; ${breaks[0]}</div></div>`;
+      for (let i = 0; i < breaks.length - 1; i++) {
+        html += `<div class="legend-row"><div class="legend-color" style="background:${colors[i + 1]}"></div><div>${breaks[i]} – ${breaks[i + 1]}</div></div>`;
+      }
+      html += `<div class="legend-row"><div class="legend-color" style="background:${colors[colors.length - 1]}"></div><div>&gt; ${breaks[breaks.length - 1]}</div></div>`;
+      html += '<hr>';
+    } else if (layerDefinitions.denscover.categorical) {
+      const { field, values, palette } = layerDefinitions.denscover.categorical;
+      html += `<div class="legend-title">Land cover (${field})</div>`;
+      values.slice(0,10).forEach((v,i)=>{
+        html += `<div class="legend-row"><div class="legend-color" style="background:${palette[i % palette.length]}"></div><div>${v}</div></div>`;
+      });
+      if (values.length > 10) html += `<div style="font-size:11px;color:#666">(+ ${values.length-10} more)</div>`;
+      html += '<hr>';
     }
-    if (codes.length > maxShow) {
-      html += `<div style="font-size:11px;color:#777;margin-top:6px;">+ ${codes.length - maxShow} more categories…</div>`;
-    }
-    html += '<hr>';
   }
 
-  // Proportional symbols legend
   if (enabledLayers.poipop) {
-    const maxR = parseInt(document.getElementById('maxRadius').value, 10);
-    const maxVal = layerDefinitions.poipop.maxValueApprox || 150000;
-
-    const value1 = 500;
-    const value2 = 8000;
-    const value3 = 40000;
-    const value4 = 80000;
-
-    const label1 = "500";
-    const label2 = "8,000";
-    const label3 = "40,000";
-    const label4 = "80,000";
-
-    const r1 = Math.pow(value1 / maxVal, 0.57) * maxR;
-    const r2 = Math.pow(value2 / maxVal, 0.57) * maxR;
-    const r3 = Math.pow(value3 / maxVal, 0.57) * maxR;
-    const r4 = Math.pow(value4 / maxVal, 0.57) * maxR;
-
-    const svgWidth = r4 * 2 + 60;
-    const svgHeight = r4 * 2 + 30;
-    const centerX = svgWidth / 2;
-    const bottomY = svgHeight - 10;
-
-    const cy1 = bottomY - r1;
-    const cy2 = bottomY - r2;
-    const cy3 = bottomY - r3;
-    const cy4 = bottomY - r4;
-
-    html += `<div class="legend-title">Population (indicative values)</div>`;
-    html += `<div style="text-align:center"><svg width="${svgWidth}" height="${svgHeight}">`;
-
-    html += `<circle cx="${centerX}" cy="${cy4}" r="${r4}" fill="none" stroke="red" stroke-width="1.5"/>`;
-    html += `<text x="${centerX}" y="${cy4 - r4 - 5}" text-anchor="middle" font-size="11" fill="#333">${label4}</text>`;
-
-    html += `<circle cx="${centerX}" cy="${cy3}" r="${r3}" fill="none" stroke="red" stroke-width="1.5"/>`;
-    html += `<text x="${centerX}" y="${cy3 - r3 - 5}" text-anchor="middle" font-size="11" fill="#333">${label3}</text>`;
-
-    html += `<circle cx="${centerX}" cy="${cy2}" r="${r2}" fill="none" stroke="red" stroke-width="1.5"/>`;
-    html += `<text x="${centerX}" y="${cy2 - r2 - 5}" text-anchor="middle" font-size="11" fill="#333">${label2}</text>`;
-
-    html += `<circle cx="${centerX}" cy="${cy1}" r="${r1}" fill="none" stroke="red" stroke-width="1.5"/>`;
-    html += `<text x="${centerX}" y="${cy1 - r1 - 5}" text-anchor="middle" font-size="11" fill="#333">${label1}</text>`;
-
-    html += `</svg></div><hr>`;
+    html += `<div class="legend-title">Population (proportional symbols)</div>`;
+    html += `<div style="font-size:11px;color:#666">Κόκκινοι κύκλοι = POPMUN</div><hr>`;
   }
 
-  // Contours
   if (enabledLayers.contours) {
-    html += `<div class="legend-title">Population dynamic (2M & 4M)</div>`;
-    html += `<div class="legend-row"><svg class="legend-line"><line x1="0" y1="7" x2="40" y2="7" stroke="#8B0000" stroke-width="3"/></svg><div>Primary (Id = 1)</div></div>`;
-    html += `<div class="legend-row"><svg class="legend-line"><line x1="0" y1="7" x2="40" y2="7" stroke="#8B0000" stroke-width="1.2"/></svg><div>Secondary (Id = 2)</div></div>`;
+    html += `<div class="legend-title">Population dynamic (isopleths)</div>`;
+    html += `<div class="legend-row"><svg class="legend-line"><line x1="0" y1="7" x2="40" y2="7" stroke="#8B0000" stroke-width="3"/></svg><div>Primary (ID=1)</div></div>`;
+    html += `<div class="legend-row"><svg class="legend-line"><line x1="0" y1="7" x2="40" y2="7" stroke="#8B0000" stroke-width="1.2"/></svg><div>Secondary (ID=2)</div></div>`;
     html += '<hr>';
   }
 
-  // Dots
   if (enabledLayers.dots) {
-    html += `<div class="legend-title">Population density</div>`;
+    html += `<div class="legend-title">Dot density</div>`;
     html += `<div class="legend-row"><svg width="30" height="24"><circle cx="15" cy="12" r="${parseFloat(document.getElementById('dotSize').value)}" fill="#ff0000"/></svg><div>1 dot = 500 people</div></div>`;
     html += '<hr>';
   }
 
-  // Boundaries
   if (enabledLayers.boundaries) {
-    html += `<div class="legend-row"><svg width="40" height="18"><line x1="0" y1="9" x2="40" y2="9" stroke="#bbbbbb" stroke-width="1"/></svg> <div> Municipal boundaries</div></div>`;
+    html += `<div class="legend-row"><svg width="40" height="18"><line x1="0" y1="9" x2="40" y2="9" stroke="#bbbbbb" stroke-width="1"/></svg> <div>Municipal boundaries</div></div>`;
   }
 
   if (html.length) {
@@ -815,11 +909,10 @@ function showHideControls() {
   });
 }
 
-// Choropleth
 document.getElementById('popdensToggle').addEventListener('change', (e) => {
-  if (e.target.checked) loadPopDensLayer();
-  else removeLayer('popdens');
+  if (e.target.checked) loadPopDensLayer(); else removeLayer('popdens');
 });
+
 document.getElementById('classificationMethod').addEventListener('change', () => {
   const method = document.getElementById('classificationMethod').value;
   const numClassesLabel = document.getElementById('numClassesLabel');
@@ -828,9 +921,11 @@ document.getElementById('classificationMethod').addEventListener('change', () =>
   else { numClassesSelect.disabled = false; numClassesLabel.style.opacity = '1'; }
   if (enabledLayers.popdens) applyPopDensClassification();
 });
+
 document.getElementById('numClasses').addEventListener('change', () => {
   if (enabledLayers.popdens) applyPopDensClassification();
 });
+
 document.getElementById('popdensOpacity').addEventListener('input', (e) => {
   document.getElementById('popdensOpacityLabel').textContent = e.target.value + '%';
   if (map.getLayer(layerDefinitions.popdens.layerId)) {
@@ -838,11 +933,17 @@ document.getElementById('popdensOpacity').addEventListener('input', (e) => {
   }
 });
 
-// ✅ Dasymetric categorical
 document.getElementById('denscoverToggle').addEventListener('change', (e) => {
-  if (e.target.checked) loadDensCoverLayer();
-  else removeLayer('denscover');
+  if (e.target.checked) loadDensCoverLayer(); else removeLayer('denscover');
 });
+
+document.getElementById('denscoverClassificationMethod').addEventListener('change', () => {
+  if (enabledLayers.denscover) applyDensCoverClassification();
+});
+document.getElementById('denscoverNumClasses').addEventListener('change', () => {
+  if (enabledLayers.denscover) applyDensCoverClassification();
+});
+
 document.getElementById('denscoverOpacity').addEventListener('input', (e) => {
   document.getElementById('denscoverOpacityLabel').textContent = e.target.value + '%';
   if (map.getLayer(layerDefinitions.denscover.layerId)) {
@@ -850,15 +951,15 @@ document.getElementById('denscoverOpacity').addEventListener('input', (e) => {
   }
 });
 
-// Proportional
 document.getElementById('poipopToggle').addEventListener('change', (e) => {
-  if (e.target.checked) loadPoipopLayer();
-  else removeLayer('poipop');
+  if (e.target.checked) loadPoipopLayer(); else removeLayer('poipop');
 });
+
 document.getElementById('maxRadius').addEventListener('input', (e) => {
   document.getElementById('maxRadiusLabel').textContent = e.target.value;
   updatePoipopRadius();
 });
+
 document.getElementById('poipopOpacity').addEventListener('input', (e) => {
   document.getElementById('poipopOpacityLabel').textContent = e.target.value + '%';
   if (map.getLayer(layerDefinitions.poipop.layerId)) {
@@ -866,11 +967,10 @@ document.getElementById('poipopOpacity').addEventListener('input', (e) => {
   }
 });
 
-// Contours
 document.getElementById('contoursToggle').addEventListener('change', (e) => {
-  if (e.target.checked) loadContoursLayer();
-  else removeLayer('contours');
+  if (e.target.checked) loadContoursLayer(); else removeLayer('contours');
 });
+
 document.getElementById('contoursOpacity').addEventListener('input', (e) => {
   document.getElementById('contoursOpacityLabel').textContent = e.target.value + '%';
   if (map.getLayer(layerDefinitions.contours.layerId)) {
@@ -878,18 +978,17 @@ document.getElementById('contoursOpacity').addEventListener('input', (e) => {
   }
 });
 
-// Dots
 document.getElementById('dotsToggle').addEventListener('change', (e) => {
-  if (e.target.checked) loadDotsLayer();
-  else removeLayer('dots');
+  if (e.target.checked) loadDotsLayer(); else removeLayer('dots');
 });
+
 document.getElementById('dotSize').addEventListener('input', (e) => {
   document.getElementById('dotSizeLabel').textContent = e.target.value;
   if (map.getLayer(layerDefinitions.dots.layerId)) {
     map.setPaintProperty(layerDefinitions.dots.layerId, 'circle-radius', parseFloat(e.target.value));
   }
-  updateLegend();
 });
+
 document.getElementById('dotsOpacity').addEventListener('input', (e) => {
   document.getElementById('dotsOpacityLabel').textContent = e.target.value + '%';
   if (map.getLayer(layerDefinitions.dots.layerId)) {
@@ -897,11 +996,10 @@ document.getElementById('dotsOpacity').addEventListener('input', (e) => {
   }
 });
 
-// Boundaries
 document.getElementById('boundariesToggle').addEventListener('change', (e) => {
-  if (e.target.checked) loadBoundariesLayer();
-  else removeLayer('boundaries');
+  if (e.target.checked) loadBoundariesLayer(); else removeLayer('boundaries');
 });
+
 document.getElementById('boundariesOpacity').addEventListener('input', (e) => {
   document.getElementById('boundariesOpacityLabel').textContent = e.target.value + '%';
   if (map.getLayer(layerDefinitions.boundaries.layerId)) {
@@ -909,20 +1007,19 @@ document.getElementById('boundariesOpacity').addEventListener('input', (e) => {
   }
 });
 
-// Basemap switcher
 document.getElementById('basemapSelect').addEventListener('change', (e) => {
   const style = e.target.value;
   const enabledSnapshot = { ...enabledLayers };
   map.setStyle(style);
 
   map.once('styledata', () => {
-    addBaseControls();
+    map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-right');
+    map.addControl(new maplibregl.ScaleControl({ maxWidth: 120, unit: 'metric' }), 'bottom-left');
 
-    // Re-add enabled layers after style reset
     for (const key in enabledSnapshot) {
       if (!enabledSnapshot[key]) continue;
       if (key === 'popdens') { if (popdensData) applyPopDensClassification(); else loadPopDensLayer(); }
-      else if (key === 'denscover') { if (denscoverData) applyDensCoverCategorical(); else loadDensCoverLayer(); }
+      else if (key === 'denscover') { if (denscoverData) applyDensCoverClassification(); else loadDensCoverLayer(); }
       else if (key === 'poipop') loadPoipopLayer();
       else if (key === 'contours') loadContoursLayer();
       else if (key === 'dots') loadDotsLayer();
@@ -932,20 +1029,11 @@ document.getElementById('basemapSelect').addEventListener('change', (e) => {
 });
 
 showHideControls();
-
-['popdensToggle','denscoverToggle','poipopToggle','contoursToggle','dotsToggle','boundariesToggle'].forEach(id => {
-  document.getElementById(id).addEventListener('change', () => {
-    showHideControls();
-    updateLegend();
-  });
-});
-
 console.log('Thessalia Cartography Viewer - Ready');
 </script>
 
 </body>
 </html>
-
 
 
 
