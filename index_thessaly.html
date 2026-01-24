@@ -50,35 +50,19 @@
     padding: 18px;
     font-size: 13px;
     border-radius: 6px;
-    max-width: 360px;  /* max width */
-    max-height: 85vh;  /* max height */
+    max-width: 360px;
+    max-height: 85vh;
     box-shadow: 0 2px 6px rgba(0,0,0,0.25);
     display: none;
     resize: both;
     overflow: auto;
-    min-width: 200px;  /* min width */
-    min-height: 100px; /* min height */
+    min-width: 200px;
+    min-height: 100px;
   }
 
-  .legend-header {
-    margin-bottom: 16px;
-    padding-bottom: 12px;
-    border-bottom: 2px solid #333;
-  }
-  .legend-map-title {
-    font-size: 15px;
-    font-weight: 700;
-    color: #000;
-    margin-bottom: 10px;
-    line-height: 1.4;
-    text-align: center;
-  }
-  .legend-author {
-    font-size: 10px;
-    color: #555;
-    line-height: 1.4;
-    text-align: left;
-  }
+  .legend-header { margin-bottom: 16px; padding-bottom: 12px; border-bottom: 2px solid #333; }
+  .legend-map-title { font-size: 15px; font-weight: 700; color: #000; margin-bottom: 10px; line-height: 1.4; text-align: center; }
+  .legend-author { font-size: 10px; color: #555; line-height: 1.4; text-align: left; }
   .legend-author strong { font-weight: 700; }
 
   .legend-row { display:flex; align-items:center; margin-bottom:8px; }
@@ -91,7 +75,6 @@
 </head>
 
 <body>
-
 <div id="styleSelector">
   <select id="basemapSelect">
     <option value="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json">Light</option>
@@ -205,74 +188,123 @@
 
 <script>
 // ============================================================
-// 1. MAP INITIALIZATION
+// MAP
 // ============================================================
 const map = new maplibregl.Map({
   container: 'map',
   style: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
-  // Θεσσαλία (περίπου κέντρο)
   center: [22.45, 39.45],
   zoom: 8.2
 });
-
-// Controls (χρήσιμο/συνήθως ζητείται)
 map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-right');
 map.addControl(new maplibregl.ScaleControl({ maxWidth: 120, unit: 'metric' }), 'bottom-left');
 
 // ============================================================
-// 2. DATA CONFIGURATION
+// DATA CONFIG
 // ============================================================
 const layerDefinitions = {
-  popdens: {
-    sourceId: 'popdens-src',
-    layerId: 'popdens-layer',
-    url: 'data/dens.geojson',
-    dataField: 'POPDENS'
-  },
-  denscover: {
-    sourceId: 'denscover-src',
-    layerId: 'denscover-layer',
-    url: 'data/dasimetriko.geojson',
-    dataField: 'DENS_COVER'
-  },
-  poipop: {
-    sourceId: 'poipop-src',
-    layerId: 'poipop-layer',
-    url: 'data/dimoipop91_21.geojson',
-    dataField: 'POPMUN',
-    maxValueApprox: 150000
-  },
-  contours: {
-    sourceId: 'contours-src',
-    layerId: 'contours-layer',
-    url: 'data/kur_deut.geojson'
-  },
-  dots: {
-    sourceId: 'dots-src',
-    layerId: 'dots-layer',
-    url: 'data/dot500pop.geojson'
-  },
-  boundaries: {
-    sourceId: 'boundaries-src',
-    layerId: 'boundaries-layer',
-    url: 'data/dimoi_oria.geojson'
-  }
+  popdens: { sourceId:'popdens-src', layerId:'popdens-layer', url:'data/dens.geojson', dataField:'POPDENS' },
+  denscover: { sourceId:'denscover-src', layerId:'denscover-layer', url:'data/dasimetriko.geojson', dataField:'DENS_COVER' },
+  poipop: { sourceId:'poipop-src', layerId:'poipop-layer', url:'data/dimoipop91_21.geojson', dataField:'POPMUN', maxValueApprox:150000 },
+  contours: { sourceId:'contours-src', layerId:'contours-layer', url:'data/kur_deut.geojson' },
+  dots: { sourceId:'dots-src', layerId:'dots-layer', url:'data/dot500pop.geojson' },
+  boundaries: { sourceId:'boundaries-src', layerId:'boundaries-layer', url:'data/dimoi_oria.geojson' }
 };
 
 let popdensData = null;
 let denscoverData = null;
 
-const enabledLayers = {
-  popdens: false,
-  denscover: false,
-  poipop: false,
-  contours: false,
-  dots: false,
-  boundaries: false
-};
+const enabledLayers = { popdens:false, denscover:false, poipop:false, contours:false, dots:false, boundaries:false };
 
 // ============================================================
-// 3. COLOR SCHEMES
+// HELPERS: fetch + CRS check + auto zoom + field detect
+// ============================================================
+async function fetchGeoJSON(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status} loading ${url}`);
+  return await res.json();
+}
+
+function getBBox(geojson) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+
+  function scan(c) {
+    if (!c) return;
+    if (typeof c[0] === 'number' && typeof c[1] === 'number') {
+      const x=c[0], y=c[1];
+      if (isFinite(x) && isFinite(y)) {
+        minX=Math.min(minX,x); minY=Math.min(minY,y);
+        maxX=Math.max(maxX,x); maxY=Math.max(maxY,y);
+      }
+      return;
+    }
+    for (const cc of c) scan(cc);
+  }
+
+  for (const f of geojson.features || []) scan(f?.geometry?.coordinates);
+  if (!isFinite(minX) || !isFinite(minY) || !isFinite(maxX) || !isFinite(maxY)) return null;
+  return {minX,minY,maxX,maxY};
+}
+
+function looksProjected(bbox) {
+  // WGS84 Ελλάδα: lon ~ 19-29, lat ~ 34-42
+  // Projected (EGSA/UTM): x,y σε εκατοντάδες χιλιάδες / εκατομμύρια
+  return Math.abs(bbox.minX) > 180 || Math.abs(bbox.minY) > 90 || Math.abs(bbox.maxX) > 180 || Math.abs(bbox.maxY) > 90;
+}
+
+function zoomToGeoJSON(geojson, pad=40) {
+  const bbox = getBBox(geojson);
+  if (!bbox) return;
+
+  if (looksProjected(bbox)) {
+    alert(
+      "⚠️ Τα δεδομένα φαίνεται να είναι σε προβολικό CRS (π.χ. EGSA87 / EPSG:2100) και όχι WGS84.\n\n" +
+      "Πρέπει να τα εξάγεις σε EPSG:4326 (lon/lat) για να φαίνονται στον χάρτη.\n" +
+      "QGIS: Export → Save Features As… → CRS: EPSG:4326."
+    );
+    console.log("Projected bbox:", bbox);
+    return;
+  }
+
+  map.fitBounds([[bbox.minX, bbox.minY],[bbox.maxX,bbox.maxY]], {padding: pad, duration: 700});
+}
+
+function detectNumericField(geojson, preferred, fallbackList) {
+  if (!geojson?.features?.length) return preferred;
+  const props = geojson.features[0].properties || {};
+
+  const isNumeric = (k) => {
+    for (const f of geojson.features) {
+      const v = f?.properties?.[k];
+      if (v === null || v === undefined) continue;
+      const n = parseFloat(v);
+      if (!isNaN(n) && isFinite(n)) return true;
+    }
+    return false;
+  };
+
+  if ((preferred in props) && isNumeric(preferred)) return preferred;
+
+  for (const k of fallbackList) {
+    if ((k in props) && isNumeric(k)) return k;
+  }
+
+  console.warn("No numeric field found. Available:", Object.keys(props));
+  alert(
+    `⚠️ Δεν βρέθηκε αριθμητικό πεδίο για ταξινόμηση.\n` +
+    `Ζητούμενο: "${preferred}"\n` +
+    `Διαθέσιμα πεδία:\n${Object.keys(props).join(', ')}`
+  );
+  return preferred;
+}
+
+function ensureSource(id, geojsonObj) {
+  if (!map.getSource(id)) map.addSource(id, { type:'geojson', data: geojsonObj });
+  else map.getSource(id).setData(geojsonObj);
+}
+
+// ============================================================
+// CLASSIFICATION
 // ============================================================
 const colorSchemes = {
   3: ['#ffcccc', '#ff6666', '#990000'],
@@ -281,14 +313,7 @@ const colorSchemes = {
   6: ['#ffcccc', '#ff9999', '#ff6666', '#ff3333', '#cc0000', '#990000'],
   7: ['#ffcccc', '#ff9999', '#ff6666', '#ff3333', '#ff0000', '#cc0000', '#990000']
 };
-
-const denscoverColorSchemes = {
-  3: ['#ffcccc', '#ff6666', '#990000'],
-  4: ['#ffcccc', '#ff9999', '#cc0000', '#990000'],
-  5: ['#ffcccc', '#ff9999', '#ff6666', '#cc0000', '#990000'],
-  6: ['#ffcccc', '#ff9999', '#ff6666', '#ff3333', '#cc0000', '#990000'],
-  7: ['#ffcccc', '#ff9999', '#ff6666', '#ff3333', '#ff0000', '#cc0000', '#990000']
-};
+const denscoverColorSchemes = {...colorSchemes};
 
 const customBreaks = [30, 75, 150, 300, 600];
 const customColors = ['#ffcccc', '#ff9999', '#ff6666', '#cc0000', '#990000', '#660000'];
@@ -296,121 +321,102 @@ const customColors = ['#ffcccc', '#ff9999', '#ff6666', '#cc0000', '#990000', '#6
 const denscoverCustomBreaks = [500, 1500, 3500, 6000, 8500];
 const denscoverCustomColors = ['#ffcccc', '#ff9999', '#ff6666', '#cc0000', '#990000', '#660000'];
 
-// ============================================================
-// 4. CLASSIFICATION FUNCTIONS
-// ============================================================
 function equalIntervalBreaks(sorted, n) {
-  const min = sorted[0];
-  const max = sorted[sorted.length - 1];
+  const min = sorted[0], max = sorted[sorted.length-1];
   if (min === max) return [max];
   const step = (max - min) / n;
   const breaks = [];
-  for (let i = 1; i < n; i++) breaks.push(min + step * i);
+  for (let i=1; i<n; i++) breaks.push(min + step*i);
   return breaks.map(b => Number(b.toFixed(2)));
 }
-
 function quantileBreaks(sorted, n) {
   const breaks = [];
-  for (let i = 1; i < n; i++) {
-    const idx = Math.floor((sorted.length * i) / n);
-    breaks.push(sorted[Math.min(idx, sorted.length - 1)]);
+  for (let i=1; i<n; i++){
+    const idx = Math.floor((sorted.length * i)/n);
+    breaks.push(sorted[Math.min(idx, sorted.length-1)]);
   }
   return breaks.map(b => Number(b.toFixed(2)));
 }
-
 function jenksBreaks(sorted, numClasses) {
   const n = sorted.length;
-  const mat1 = Array.from({ length: n + 1 }, () => Array(numClasses + 1).fill(0));
-  const mat2 = Array.from({ length: n + 1 }, () => Array(numClasses + 1).fill(0));
+  const mat1 = Array.from({length:n+1}, () => Array(numClasses+1).fill(0));
+  const mat2 = Array.from({length:n+1}, () => Array(numClasses+1).fill(0));
 
-  for (let i = 1; i <= numClasses; i++) {
+  for (let i=1; i<=numClasses; i++){
     mat1[1][i] = 1;
     mat2[1][i] = 0;
-    for (let j = 2; j <= n; j++) mat2[j][i] = Infinity;
+    for (let j=2; j<=n; j++) mat2[j][i] = Infinity;
   }
 
-  for (let l = 2; l <= n; l++) {
-    let s1 = 0, s2 = 0, w = 0;
-    for (let m = 1; m <= l; m++) {
-      const i3 = l - m + 1;
-      const val = sorted[i3 - 1];
-      s2 += val * val;
-      s1 += val;
-      w++;
-      const v = s2 - (s1 * s1) / w;
-      const i4 = i3 - 1;
-      if (i4 !== 0) {
-        for (let j = 2; j <= numClasses; j++) {
-          if (mat2[l][j] >= (v + mat2[i4][j - 1])) {
+  for (let l=2; l<=n; l++){
+    let s1=0, s2=0, w=0;
+    for (let m=1; m<=l; m++){
+      const i3 = l-m+1;
+      const val = sorted[i3-1];
+      s2 += val*val; s1 += val; w++;
+      const v = s2 - (s1*s1)/w;
+      const i4 = i3-1;
+      if (i4 !== 0){
+        for (let j=2; j<=numClasses; j++){
+          if (mat2[l][j] >= (v + mat2[i4][j-1])){
             mat1[l][j] = i3;
-            mat2[l][j] = v + mat2[i4][j - 1];
+            mat2[l][j] = v + mat2[i4][j-1];
           }
         }
       }
     }
     mat1[l][1] = 1;
-    mat2[l][1] = mat2[l - 1][1] + (sorted[l - 1] - sorted[0]) * (sorted[l - 1] - sorted[0]);
+    mat2[l][1] = mat2[l-1][1] + (sorted[l-1]-sorted[0])*(sorted[l-1]-sorted[0]);
   }
 
   const breaks = [];
-  let k = n;
-  for (let j = numClasses; j >= 2; j--) {
-    const id = mat1[k][j] - 1;
+  let k=n;
+  for (let j=numClasses; j>=2; j--){
+    const id = mat1[k][j]-1;
     breaks.push(sorted[id]);
-    k = mat1[k][j] - 1;
+    k = mat1[k][j]-1;
   }
   return breaks.reverse().map(b => Number(b.toFixed(2)));
 }
-
-function calculateBreaks(values, numClasses, method, customBreaksArray) {
-  const sorted = values.filter(v => v != null && !isNaN(v)).sort((a, b) => a - b);
-  if (sorted.length === 0) return [];
+function calculateBreaks(values, numClasses, method, customArr) {
+  const sorted = values.filter(v => v!=null && !isNaN(v)).sort((a,b)=>a-b);
+  if (!sorted.length) return [];
   if (method === 'equal') return equalIntervalBreaks(sorted, numClasses);
   if (method === 'quantile') return quantileBreaks(sorted, numClasses);
   if (method === 'natural') return jenksBreaks(sorted, numClasses);
-  if (method === 'custom') return customBreaksArray;
+  if (method === 'custom') return customArr;
   return equalIntervalBreaks(sorted, numClasses);
 }
-
 function createStepExpression(breaks, colors, field) {
   const expr = ['step', ['get', field], colors[0]];
-  for (let i = 0; i < breaks.length; i++) {
+  for (let i=0; i<breaks.length; i++){
     expr.push(breaks[i]);
-    expr.push(colors[i + 1] || colors[colors.length - 1]);
+    expr.push(colors[i+1] || colors[colors.length-1]);
   }
   return expr;
 }
 
-function ensureSource(id, urlOrGeojson) {
-  if (!map.getSource(id)) {
-    map.addSource(id, { type: 'geojson', data: urlOrGeojson });
-  } else {
-    if (typeof urlOrGeojson === 'object') map.getSource(id).setData(urlOrGeojson);
-  }
-}
-
 // ============================================================
-// 5. LAYER LOADING FUNCTIONS
+// LAYERS
 // ============================================================
 function applyPopDensClassification() {
   if (!popdensData) return;
 
   const method = document.getElementById('classificationMethod').value;
-  const nclasses = parseInt(document.getElementById('numClasses').value, 10);
+  const nclasses = parseInt(document.getElementById('numClasses').value,10);
 
   let colors, breaks;
-
   if (method === 'custom') {
-    breaks = customBreaks;
-    colors = customColors;
+    breaks = customBreaks; colors = customColors;
   } else {
     colors = colorSchemes[nclasses] || colorSchemes[5];
     const values = popdensData.features.map(f => parseFloat(f.properties[layerDefinitions.popdens.dataField]));
     breaks = calculateBreaks(values, nclasses, method, null);
   }
 
-  const expr = createStepExpression(breaks, colors, layerDefinitions.popdens.dataField);
   ensureSource(layerDefinitions.popdens.sourceId, popdensData);
+
+  const expr = createStepExpression(breaks, colors, layerDefinitions.popdens.dataField);
 
   if (map.getLayer(layerDefinitions.popdens.layerId)) {
     map.setPaintProperty(layerDefinitions.popdens.layerId, 'fill-color', expr);
@@ -421,7 +427,7 @@ function applyPopDensClassification() {
       source: layerDefinitions.popdens.sourceId,
       paint: {
         'fill-color': expr,
-        'fill-opacity': parseInt(document.getElementById('popdensOpacity').value, 10) / 100
+        'fill-opacity': parseInt(document.getElementById('popdensOpacity').value,10)/100
       }
     });
   }
@@ -433,32 +439,42 @@ function applyPopDensClassification() {
   updateLegend();
 }
 
-function loadPopDensLayer() {
-  fetch(layerDefinitions.popdens.url)
-    .then(r => r.json())
-    .then(gj => { popdensData = gj; applyPopDensClassification(); })
-    .catch(err => { console.error(err); alert('Error loading dens.geojson (POPDENS).'); });
+async function loadPopDensLayer() {
+  try {
+    popdensData = await fetchGeoJSON(layerDefinitions.popdens.url);
+
+    layerDefinitions.popdens.dataField = detectNumericField(
+      popdensData,
+      layerDefinitions.popdens.dataField,
+      ['popdens','PopDens','DENS','DENSITY','density','POPDEN','POPDENS_21']
+    );
+
+    zoomToGeoJSON(popdensData);
+    applyPopDensClassification();
+  } catch (e) {
+    console.error(e);
+    alert(`Error loading ${layerDefinitions.popdens.url}`);
+  }
 }
 
 function applyDensCoverClassification() {
   if (!denscoverData) return;
 
   const method = document.getElementById('denscoverClassificationMethod').value;
-  const nclasses = parseInt(document.getElementById('denscoverNumClasses').value, 10);
+  const nclasses = parseInt(document.getElementById('denscoverNumClasses').value,10);
 
   let colors, breaks;
-
   if (method === 'custom') {
-    breaks = denscoverCustomBreaks;
-    colors = denscoverCustomColors;
+    breaks = denscoverCustomBreaks; colors = denscoverCustomColors;
   } else {
     colors = denscoverColorSchemes[nclasses] || denscoverColorSchemes[5];
     const values = denscoverData.features.map(f => parseFloat(f.properties[layerDefinitions.denscover.dataField]));
     breaks = calculateBreaks(values, nclasses, method, null);
   }
 
-  const expr = createStepExpression(breaks, colors, layerDefinitions.denscover.dataField);
   ensureSource(layerDefinitions.denscover.sourceId, denscoverData);
+
+  const expr = createStepExpression(breaks, colors, layerDefinitions.denscover.dataField);
 
   if (map.getLayer(layerDefinitions.denscover.layerId)) {
     map.setPaintProperty(layerDefinitions.denscover.layerId, 'fill-color', expr);
@@ -469,7 +485,7 @@ function applyDensCoverClassification() {
       source: layerDefinitions.denscover.sourceId,
       paint: {
         'fill-color': expr,
-        'fill-opacity': parseInt(document.getElementById('denscoverOpacity').value, 10) / 100
+        'fill-opacity': parseInt(document.getElementById('denscoverOpacity').value,10)/100
       }
     });
   }
@@ -481,144 +497,176 @@ function applyDensCoverClassification() {
   updateLegend();
 }
 
-function loadDensCoverLayer() {
-  fetch(layerDefinitions.denscover.url)
-    .then(r => r.json())
-    .then(gj => { denscoverData = gj; applyDensCoverClassification(); })
-    .catch(err => { console.error(err); alert('Error loading dasimetriko.geojson (DENS_COVER).'); });
+async function loadDensCoverLayer() {
+  try {
+    denscoverData = await fetchGeoJSON(layerDefinitions.denscover.url);
+
+    // εδώ θα σε προειδοποιήσει αν ΔΕΝ υπάρχει αριθμητικό πεδίο
+    layerDefinitions.denscover.dataField = detectNumericField(
+      denscoverData,
+      layerDefinitions.denscover.dataField,
+      ['dens_cover','DENS_COVER','DENS_COV','DENS','density','DENS_COVER_21']
+    );
+
+    zoomToGeoJSON(denscoverData);
+    applyDensCoverClassification();
+  } catch (e) {
+    console.error(e);
+    alert(`Error loading ${layerDefinitions.denscover.url}`);
+  }
 }
 
-function loadPoipopLayer() {
-  const def = layerDefinitions.poipop;
-  fetch(def.url)
-    .then(r => r.json())
-    .then(geojson => {
-      geojson.features.sort((a, b) => {
-        const valA = parseFloat(a.properties[def.dataField]) || 0;
-        const valB = parseFloat(b.properties[def.dataField]) || 0;
-        return valB - valA;
+async function loadBoundariesLayer() {
+  const def = layerDefinitions.boundaries;
+  try {
+    const gj = await fetchGeoJSON(def.url);
+    ensureSource(def.sourceId, gj);
+    zoomToGeoJSON(gj);
+
+    if (!map.getLayer(def.layerId)) {
+      map.addLayer({
+        id: def.layerId,
+        type: 'line',
+        source: def.sourceId,
+        paint: {
+          'line-color': '#bbbbbb',
+          'line-width': 1,
+          'line-opacity': parseInt(document.getElementById('boundariesOpacity').value,10)/100
+        }
       });
+    } else {
+      map.setPaintProperty(def.layerId, 'line-opacity', parseInt(document.getElementById('boundariesOpacity').value,10)/100);
+    }
 
-      ensureSource(def.sourceId, geojson);
+    enabledLayers.boundaries = true;
+    document.getElementById('boundariesControls').style.display = 'block';
+    updateLegend();
+  } catch (e) {
+    console.error(e);
+    alert(`Error loading ${def.url}`);
+  }
+}
 
-      const maxR = parseInt(document.getElementById('maxRadius').value, 10);
-      const vL = def.maxValueApprox || 150000;
-      const radiusExpr = ['*', ['^', ['/', ['get', def.dataField], vL], 0.57], maxR];
+async function loadDotsLayer() {
+  const def = layerDefinitions.dots;
+  try {
+    const gj = await fetchGeoJSON(def.url);
+    ensureSource(def.sourceId, gj);
+    zoomToGeoJSON(gj);
 
-      if (!map.getLayer(def.layerId)) {
-        map.addLayer({
-          id: def.layerId,
-          type: 'circle',
-          source: def.sourceId,
-          paint: {
-            'circle-color': 'rgba(255,0,0,0.25)',
-            'circle-radius': radiusExpr,
-            'circle-opacity': parseInt(document.getElementById('poipopOpacity').value, 10) / 100,
-            'circle-stroke-color': 'red',
-            'circle-stroke-width': 0.8
-          }
-        });
-      } else {
-        map.setPaintProperty(def.layerId, 'circle-radius', radiusExpr);
-        map.setPaintProperty(def.layerId, 'circle-opacity', parseInt(document.getElementById('poipopOpacity').value, 10) / 100);
-      }
+    const dotSize = parseFloat(document.getElementById('dotSize').value);
+    const opacity = parseInt(document.getElementById('dotsOpacity').value,10)/100;
 
-      enabledLayers.poipop = true;
-      document.getElementById('poipopControls').style.display = 'block';
-      updateLegend();
-    })
-    .catch(err => { console.error(err); alert('Error loading dimoipop91_21.geojson (POPMUN).'); });
+    if (!map.getLayer(def.layerId)) {
+      map.addLayer({
+        id: def.layerId,
+        type: 'circle',
+        source: def.sourceId,
+        paint: { 'circle-color':'#ff0000', 'circle-radius':dotSize, 'circle-opacity':opacity }
+      });
+    } else {
+      map.setPaintProperty(def.layerId, 'circle-radius', dotSize);
+      map.setPaintProperty(def.layerId, 'circle-opacity', opacity);
+    }
+
+    enabledLayers.dots = true;
+    document.getElementById('dotsControls').style.display = 'block';
+    updateLegend();
+  } catch (e) {
+    console.error(e);
+    alert(`Error loading ${def.url}`);
+  }
+}
+
+async function loadContoursLayer() {
+  const def = layerDefinitions.contours;
+  try {
+    const gj = await fetchGeoJSON(def.url);
+    ensureSource(def.sourceId, gj);
+    zoomToGeoJSON(gj);
+
+    const widthExpr = ['case', ['==', ['get', 'ID'], 1], 3, 1.2];
+    const color = '#8B0000';
+
+    if (!map.getLayer(def.layerId)) {
+      map.addLayer({
+        id: def.layerId,
+        type: 'line',
+        source: def.sourceId,
+        paint: {
+          'line-color': color,
+          'line-width': widthExpr,
+          'line-opacity': parseInt(document.getElementById('contoursOpacity').value,10)/100
+        }
+      });
+    } else {
+      map.setPaintProperty(def.layerId, 'line-opacity', parseInt(document.getElementById('contoursOpacity').value,10)/100);
+    }
+
+    enabledLayers.contours = true;
+    document.getElementById('contoursControls').style.display = 'block';
+    updateLegend();
+  } catch (e) {
+    console.error(e);
+    alert(`Error loading ${def.url}`);
+  }
+}
+
+async function loadPoipopLayer() {
+  const def = layerDefinitions.poipop;
+  try {
+    const geojson = await fetchGeoJSON(def.url);
+
+    // sort largest first
+    geojson.features.sort((a,b)=>{
+      const va = parseFloat(a.properties[def.dataField])||0;
+      const vb = parseFloat(b.properties[def.dataField])||0;
+      return vb-va;
+    });
+
+    ensureSource(def.sourceId, geojson);
+    zoomToGeoJSON(geojson);
+
+    const maxR = parseInt(document.getElementById('maxRadius').value,10);
+    const vL = def.maxValueApprox || 150000;
+    const radiusExpr = ['*', ['^', ['/', ['get', def.dataField], vL], 0.57], maxR];
+
+    if (!map.getLayer(def.layerId)) {
+      map.addLayer({
+        id: def.layerId,
+        type: 'circle',
+        source: def.sourceId,
+        paint: {
+          'circle-color': 'rgba(255,0,0,0.25)',
+          'circle-radius': radiusExpr,
+          'circle-opacity': parseInt(document.getElementById('poipopOpacity').value,10)/100,
+          'circle-stroke-color': 'red',
+          'circle-stroke-width': 0.8
+        }
+      });
+    } else {
+      map.setPaintProperty(def.layerId, 'circle-radius', radiusExpr);
+      map.setPaintProperty(def.layerId, 'circle-opacity', parseInt(document.getElementById('poipopOpacity').value,10)/100);
+    }
+
+    enabledLayers.poipop = true;
+    document.getElementById('poipopControls').style.display = 'block';
+    updateLegend();
+  } catch (e) {
+    console.error(e);
+    alert(`Error loading ${def.url}`);
+  }
 }
 
 function updatePoipopRadius() {
   const def = layerDefinitions.poipop;
   if (!map.getLayer(def.layerId)) return;
 
-  const maxR = parseInt(document.getElementById('maxRadius').value, 10);
+  const maxR = parseInt(document.getElementById('maxRadius').value,10);
   const vL = def.maxValueApprox || 150000;
   const radiusExpr = ['*', ['^', ['/', ['get', def.dataField], vL], 0.57], maxR];
 
   map.setPaintProperty(def.layerId, 'circle-radius', radiusExpr);
-  updateLegend();
-}
-
-function loadContoursLayer() {
-  const def = layerDefinitions.contours;
-  ensureSource(def.sourceId, def.url);
-
-  const widthExpr = ['case', ['==', ['get', 'ID'], 1], 3, 1.2];
-  const color = '#8B0000';
-
-  if (!map.getLayer(def.layerId)) {
-    map.addLayer({
-      id: def.layerId,
-      type: 'line',
-      source: def.sourceId,
-      paint: {
-        'line-color': color,
-        'line-width': widthExpr,
-        'line-opacity': parseInt(document.getElementById('contoursOpacity').value, 10) / 100
-      }
-    });
-  } else {
-    map.setPaintProperty(def.layerId, 'line-width', widthExpr);
-    map.setPaintProperty(def.layerId, 'line-opacity', parseInt(document.getElementById('contoursOpacity').value, 10) / 100);
-  }
-
-  enabledLayers.contours = true;
-  document.getElementById('contoursControls').style.display = 'block';
-  updateLegend();
-}
-
-function loadDotsLayer() {
-  const def = layerDefinitions.dots;
-  ensureSource(def.sourceId, def.url);
-
-  const dotSize = parseFloat(document.getElementById('dotSize').value);
-  const opacity = parseInt(document.getElementById('dotsOpacity').value, 10) / 100;
-
-  if (!map.getLayer(def.layerId)) {
-    map.addLayer({
-      id: def.layerId,
-      type: 'circle',
-      source: def.sourceId,
-      paint: {
-        'circle-color': '#ff0000',
-        'circle-radius': dotSize,
-        'circle-opacity': opacity
-      }
-    });
-  } else {
-    map.setPaintProperty(def.layerId, 'circle-radius', dotSize);
-    map.setPaintProperty(def.layerId, 'circle-opacity', opacity);
-  }
-
-  enabledLayers.dots = true;
-  document.getElementById('dotsControls').style.display = 'block';
-  updateLegend();
-}
-
-function loadBoundariesLayer() {
-  const def = layerDefinitions.boundaries;
-  ensureSource(def.sourceId, def.url);
-
-  if (!map.getLayer(def.layerId)) {
-    map.addLayer({
-      id: def.layerId,
-      type: 'line',
-      source: def.sourceId,
-      paint: {
-        'line-color': '#bbbbbb',
-        'line-width': 1,
-        'line-opacity': parseInt(document.getElementById('boundariesOpacity').value, 10) / 100
-      }
-    });
-  } else {
-    map.setPaintProperty(def.layerId, 'line-opacity', parseInt(document.getElementById('boundariesOpacity').value, 10) / 100);
-  }
-
-  enabledLayers.boundaries = true;
-  document.getElementById('boundariesControls').style.display = 'block';
   updateLegend();
 }
 
@@ -633,7 +681,7 @@ function removeLayer(name) {
 }
 
 // ============================================================
-// 6. LEGEND
+// LEGEND
 // ============================================================
 function updateLegend() {
   const legend = document.getElementById('legend');
@@ -654,74 +702,56 @@ function updateLegend() {
     </div>
   `;
 
-  if (enabledLayers.popdens && layerDefinitions.popdens.breaks) {
+  if (enabledLayers.popdens && layerDefinitions.popdens.breaks && layerDefinitions.popdens.breaks.length) {
     const breaks = layerDefinitions.popdens.breaks;
-    const colors = layerDefinitions.popdens.colors;
-    html += `<div class="legend-title">Choropleth map (people / km²)</div>`;
-    html += `<div class="legend-row"><div class="legend-color" style="background:${colors[0]}"></div><div>&lt; ${breaks[0]}</div></div>`;
-    for (let i = 0; i < breaks.length - 1; i++) {
-      html += `<div class="legend-row"><div class="legend-color" style="background:${colors[i + 1]}"></div><div>${breaks[i]} – ${breaks[i + 1]}</div></div>`;
+    const colors = layerDefinitions.popdens.colors || [];
+    if (colors.length) {
+      html += `<div class="legend-title">Choropleth map (people / km²)</div>`;
+      html += `<div class="legend-row"><div class="legend-color" style="background:${colors[0]}"></div><div>&lt; ${breaks[0]}</div></div>`;
+      for (let i=0; i<breaks.length-1; i++){
+        html += `<div class="legend-row"><div class="legend-color" style="background:${colors[i+1]}"></div><div>${breaks[i]} – ${breaks[i+1]}</div></div>`;
+      }
+      html += `<div class="legend-row"><div class="legend-color" style="background:${colors[colors.length-1]}"></div><div>&gt; ${breaks[breaks.length-1]}</div></div>`;
+      html += `<hr>`;
     }
-    html += `<div class="legend-row"><div class="legend-color" style="background:${colors[colors.length - 1]}"></div><div>&gt; ${breaks[breaks.length - 1]}</div></div>`;
-    html += '<hr>';
   }
 
-  if (enabledLayers.denscover && layerDefinitions.denscover.breaks) {
+  if (enabledLayers.denscover && layerDefinitions.denscover.breaks && layerDefinitions.denscover.breaks.length) {
     const breaks = layerDefinitions.denscover.breaks;
-    const colors = layerDefinitions.denscover.colors;
-    html += `<div class="legend-title">Dasymmetric map (people / km² by land cover zone)</div>`;
-    html += `<div class="legend-row"><div class="legend-color" style="background:${colors[0]}"></div><div>&lt; ${breaks[0]}</div></div>`;
-    for (let i = 0; i < breaks.length - 1; i++) {
-      html += `<div class="legend-row"><div class="legend-color" style="background:${colors[i + 1]}"></div><div>${breaks[i]} – ${breaks[i + 1]}</div></div>`;
+    const colors = layerDefinitions.denscover.colors || [];
+    if (colors.length) {
+      html += `<div class="legend-title">Dasymmetric map (people / km² by land cover zone)</div>`;
+      html += `<div class="legend-row"><div class="legend-color" style="background:${colors[0]}"></div><div>&lt; ${breaks[0]}</div></div>`;
+      for (let i=0; i<breaks.length-1; i++){
+        html += `<div class="legend-row"><div class="legend-color" style="background:${colors[i+1]}"></div><div>${breaks[i]} – ${breaks[i+1]}</div></div>`;
+      }
+      html += `<div class="legend-row"><div class="legend-color" style="background:${colors[colors.length-1]}"></div><div>&gt; ${breaks[breaks.length-1]}</div></div>`;
+      html += `<hr>`;
     }
-    html += `<div class="legend-row"><div class="legend-color" style="background:${colors[colors.length - 1]}"></div><div>&gt; ${breaks[breaks.length - 1]}</div></div>`;
-    html += '<hr>';
   }
 
   if (enabledLayers.poipop) {
-    const maxR = parseInt(document.getElementById('maxRadius').value, 10);
+    const maxR = parseInt(document.getElementById('maxRadius').value,10);
     const maxVal = layerDefinitions.poipop.maxValueApprox || 150000;
 
-    const value1 = 500;
-    const value2 = 8000;
-    const value3 = 40000;
-    const value4 = 80000;
+    const value1=500, value2=8000, value3=40000, value4=80000;
+    const label1="500", label2="8,000", label3="40,000", label4="80,000";
 
-    const label1 = "500";
-    const label2 = "8,000";
-    const label3 = "40,000";
-    const label4 = "80,000";
+    const r1 = Math.pow(value1/maxVal,0.57)*maxR;
+    const r2 = Math.pow(value2/maxVal,0.57)*maxR;
+    const r3 = Math.pow(value3/maxVal,0.57)*maxR;
+    const r4 = Math.pow(value4/maxVal,0.57)*maxR;
 
-    const r1 = Math.pow(value1 / maxVal, 0.57) * maxR;
-    const r2 = Math.pow(value2 / maxVal, 0.57) * maxR;
-    const r3 = Math.pow(value3 / maxVal, 0.57) * maxR;
-    const r4 = Math.pow(value4 / maxVal, 0.57) * maxR;
-
-    const svgWidth = r4 * 2 + 60;
-    const svgHeight = r4 * 2 + 30;
-    const centerX = svgWidth / 2;
-    const bottomY = svgHeight - 10;
-
-    const cy1 = bottomY - r1;
-    const cy2 = bottomY - r2;
-    const cy3 = bottomY - r3;
-    const cy4 = bottomY - r4;
+    const svgWidth = r4*2+60, svgHeight = r4*2+30;
+    const centerX = svgWidth/2, bottomY = svgHeight-10;
+    const cy1=bottomY-r1, cy2=bottomY-r2, cy3=bottomY-r3, cy4=bottomY-r4;
 
     html += `<div class="legend-title">Population (indicative values)</div>`;
     html += `<div style="text-align:center"><svg width="${svgWidth}" height="${svgHeight}">`;
-
-    html += `<circle cx="${centerX}" cy="${cy4}" r="${r4}" fill="none" stroke="red" stroke-width="1.5"/>`;
-    html += `<text x="${centerX}" y="${cy4 - r4 - 5}" text-anchor="middle" font-size="11" fill="#333">${label4}</text>`;
-
-    html += `<circle cx="${centerX}" cy="${cy3}" r="${r3}" fill="none" stroke="red" stroke-width="1.5"/>`;
-    html += `<text x="${centerX}" y="${cy3 - r3 - 5}" text-anchor="middle" font-size="11" fill="#333">${label3}</text>`;
-
-    html += `<circle cx="${centerX}" cy="${cy2}" r="${r2}" fill="none" stroke="red" stroke-width="1.5"/>`;
-    html += `<text x="${centerX}" y="${cy2 - r2 - 5}" text-anchor="middle" font-size="11" fill="#333">${label2}</text>`;
-
-    html += `<circle cx="${centerX}" cy="${cy1}" r="${r1}" fill="none" stroke="red" stroke-width="1.5"/>`;
-    html += `<text x="${centerX}" y="${cy1 - r1 - 5}" text-anchor="middle" font-size="11" fill="#333">${label1}</text>`;
-
+    html += `<circle cx="${centerX}" cy="${cy4}" r="${r4}" fill="none" stroke="red" stroke-width="1.5"/><text x="${centerX}" y="${cy4-r4-5}" text-anchor="middle" font-size="11" fill="#333">${label4}</text>`;
+    html += `<circle cx="${centerX}" cy="${cy3}" r="${r3}" fill="none" stroke="red" stroke-width="1.5"/><text x="${centerX}" y="${cy3-r3-5}" text-anchor="middle" font-size="11" fill="#333">${label3}</text>`;
+    html += `<circle cx="${centerX}" cy="${cy2}" r="${r2}" fill="none" stroke="red" stroke-width="1.5"/><text x="${centerX}" y="${cy2-r2-5}" text-anchor="middle" font-size="11" fill="#333">${label2}</text>`;
+    html += `<circle cx="${centerX}" cy="${cy1}" r="${r1}" fill="none" stroke="red" stroke-width="1.5"/><text x="${centerX}" y="${cy1-r1-5}" text-anchor="middle" font-size="11" fill="#333">${label1}</text>`;
     html += `</svg></div><hr>`;
   }
 
@@ -729,13 +759,13 @@ function updateLegend() {
     html += `<div class="legend-title">Population dynamic (2M & 4M)</div>`;
     html += `<div class="legend-row"><svg class="legend-line"><line x1="0" y1="7" x2="40" y2="7" stroke="#8B0000" stroke-width="3"/></svg><div>Primary (Id = 1)</div></div>`;
     html += `<div class="legend-row"><svg class="legend-line"><line x1="0" y1="7" x2="40" y2="7" stroke="#8B0000" stroke-width="1.2"/></svg><div>Secondary (Id = 2)</div></div>`;
-    html += '<hr>';
+    html += `<hr>`;
   }
 
   if (enabledLayers.dots) {
     html += `<div class="legend-title">Population density</div>`;
     html += `<div class="legend-row"><svg width="30" height="24"><circle cx="15" cy="12" r="${parseFloat(document.getElementById('dotSize').value)}" fill="#ff0000"/></svg><div>1 dot = 500 people</div></div>`;
-    html += '<hr>';
+    html += `<hr>`;
   }
 
   if (enabledLayers.boundaries) {
@@ -752,7 +782,7 @@ function updateLegend() {
 }
 
 // ============================================================
-// 7. EVENT LISTENERS
+// UI EVENTS
 // ============================================================
 function showHideControls() {
   Object.keys(enabledLayers).forEach(k => {
@@ -763,9 +793,12 @@ function showHideControls() {
   });
 }
 
-document.getElementById('popdensToggle').addEventListener('change', (e) => {
-  if (e.target.checked) loadPopDensLayer(); else removeLayer('popdens');
-});
+document.getElementById('popdensToggle').addEventListener('change', (e) => { if (e.target.checked) loadPopDensLayer(); else removeLayer('popdens'); });
+document.getElementById('denscoverToggle').addEventListener('change', (e) => { if (e.target.checked) loadDensCoverLayer(); else removeLayer('denscover'); });
+document.getElementById('poipopToggle').addEventListener('change', (e) => { if (e.target.checked) loadPoipopLayer(); else removeLayer('poipop'); });
+document.getElementById('contoursToggle').addEventListener('change', (e) => { if (e.target.checked) loadContoursLayer(); else removeLayer('contours'); });
+document.getElementById('dotsToggle').addEventListener('change', (e) => { if (e.target.checked) loadDotsLayer(); else removeLayer('dots'); });
+document.getElementById('boundariesToggle').addEventListener('change', (e) => { if (e.target.checked) loadBoundariesLayer(); else removeLayer('boundaries'); });
 
 document.getElementById('classificationMethod').addEventListener('change', () => {
   const method = document.getElementById('classificationMethod').value;
@@ -776,19 +809,10 @@ document.getElementById('classificationMethod').addEventListener('change', () =>
   if (enabledLayers.popdens) applyPopDensClassification();
 });
 
-document.getElementById('numClasses').addEventListener('change', () => {
-  if (enabledLayers.popdens) applyPopDensClassification();
-});
-
+document.getElementById('numClasses').addEventListener('change', () => { if (enabledLayers.popdens) applyPopDensClassification(); });
 document.getElementById('popdensOpacity').addEventListener('input', (e) => {
   document.getElementById('popdensOpacityLabel').textContent = e.target.value + '%';
-  if (map.getLayer(layerDefinitions.popdens.layerId)) {
-    map.setPaintProperty(layerDefinitions.popdens.layerId, 'fill-opacity', parseInt(e.target.value, 10) / 100);
-  }
-});
-
-document.getElementById('denscoverToggle').addEventListener('change', (e) => {
-  if (e.target.checked) loadDensCoverLayer(); else removeLayer('denscover');
+  if (map.getLayer(layerDefinitions.popdens.layerId)) map.setPaintProperty(layerDefinitions.popdens.layerId, 'fill-opacity', parseInt(e.target.value,10)/100);
 });
 
 document.getElementById('denscoverClassificationMethod').addEventListener('change', () => {
@@ -800,71 +824,35 @@ document.getElementById('denscoverClassificationMethod').addEventListener('chang
   if (enabledLayers.denscover) applyDensCoverClassification();
 });
 
-document.getElementById('denscoverNumClasses').addEventListener('change', () => {
-  if (enabledLayers.denscover) applyDensCoverClassification();
-});
-
+document.getElementById('denscoverNumClasses').addEventListener('change', () => { if (enabledLayers.denscover) applyDensCoverClassification(); });
 document.getElementById('denscoverOpacity').addEventListener('input', (e) => {
   document.getElementById('denscoverOpacityLabel').textContent = e.target.value + '%';
-  if (map.getLayer(layerDefinitions.denscover.layerId)) {
-    map.setPaintProperty(layerDefinitions.denscover.layerId, 'fill-opacity', parseInt(e.target.value, 10) / 100);
-  }
+  if (map.getLayer(layerDefinitions.denscover.layerId)) map.setPaintProperty(layerDefinitions.denscover.layerId, 'fill-opacity', parseInt(e.target.value,10)/100);
 });
 
-document.getElementById('poipopToggle').addEventListener('change', (e) => {
-  if (e.target.checked) loadPoipopLayer(); else removeLayer('poipop');
-});
-
-document.getElementById('maxRadius').addEventListener('input', (e) => {
-  document.getElementById('maxRadiusLabel').textContent = e.target.value;
-  updatePoipopRadius();
-});
-
+document.getElementById('maxRadius').addEventListener('input', (e) => { document.getElementById('maxRadiusLabel').textContent = e.target.value; updatePoipopRadius(); });
 document.getElementById('poipopOpacity').addEventListener('input', (e) => {
   document.getElementById('poipopOpacityLabel').textContent = e.target.value + '%';
-  if (map.getLayer(layerDefinitions.poipop.layerId)) {
-    map.setPaintProperty(layerDefinitions.poipop.layerId, 'circle-opacity', parseInt(e.target.value, 10) / 100);
-  }
-});
-
-document.getElementById('contoursToggle').addEventListener('change', (e) => {
-  if (e.target.checked) loadContoursLayer(); else removeLayer('contours');
+  if (map.getLayer(layerDefinitions.poipop.layerId)) map.setPaintProperty(layerDefinitions.poipop.layerId, 'circle-opacity', parseInt(e.target.value,10)/100);
 });
 
 document.getElementById('contoursOpacity').addEventListener('input', (e) => {
   document.getElementById('contoursOpacityLabel').textContent = e.target.value + '%';
-  if (map.getLayer(layerDefinitions.contours.layerId)) {
-    map.setPaintProperty(layerDefinitions.contours.layerId, 'line-opacity', parseInt(e.target.value, 10) / 100);
-  }
-});
-
-document.getElementById('dotsToggle').addEventListener('change', (e) => {
-  if (e.target.checked) loadDotsLayer(); else removeLayer('dots');
+  if (map.getLayer(layerDefinitions.contours.layerId)) map.setPaintProperty(layerDefinitions.contours.layerId, 'line-opacity', parseInt(e.target.value,10)/100);
 });
 
 document.getElementById('dotSize').addEventListener('input', (e) => {
   document.getElementById('dotSizeLabel').textContent = e.target.value;
-  if (map.getLayer(layerDefinitions.dots.layerId)) {
-    map.setPaintProperty(layerDefinitions.dots.layerId, 'circle-radius', parseFloat(e.target.value));
-  }
+  if (map.getLayer(layerDefinitions.dots.layerId)) map.setPaintProperty(layerDefinitions.dots.layerId, 'circle-radius', parseFloat(e.target.value));
 });
-
 document.getElementById('dotsOpacity').addEventListener('input', (e) => {
   document.getElementById('dotsOpacityLabel').textContent = e.target.value + '%';
-  if (map.getLayer(layerDefinitions.dots.layerId)) {
-    map.setPaintProperty(layerDefinitions.dots.layerId, 'circle-opacity', parseInt(e.target.value, 10) / 100);
-  }
-});
-
-document.getElementById('boundariesToggle').addEventListener('change', (e) => {
-  if (e.target.checked) loadBoundariesLayer(); else removeLayer('boundaries');
+  if (map.getLayer(layerDefinitions.dots.layerId)) map.setPaintProperty(layerDefinitions.dots.layerId, 'circle-opacity', parseInt(e.target.value,10)/100);
 });
 
 document.getElementById('boundariesOpacity').addEventListener('input', (e) => {
   document.getElementById('boundariesOpacityLabel').textContent = e.target.value + '%';
-  if (map.getLayer(layerDefinitions.boundaries.layerId)) {
-    map.setPaintProperty(layerDefinitions.boundaries.layerId, 'line-opacity', parseInt(e.target.value, 10) / 100);
-  }
+  if (map.getLayer(layerDefinitions.boundaries.layerId)) map.setPaintProperty(layerDefinitions.boundaries.layerId, 'line-opacity', parseInt(e.target.value,10)/100);
 });
 
 document.getElementById('basemapSelect').addEventListener('change', (e) => {
@@ -873,7 +861,6 @@ document.getElementById('basemapSelect').addEventListener('change', (e) => {
   map.setStyle(style);
 
   map.once('styledata', () => {
-    // Επανέλαβε controls (χάνονται με setStyle)
     map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-right');
     map.addControl(new maplibregl.ScaleControl({ maxWidth: 120, unit: 'metric' }), 'bottom-left');
 
@@ -891,25 +878,8 @@ document.getElementById('basemapSelect').addEventListener('change', (e) => {
 
 showHideControls();
 
-const uiInputs = [
-  'classificationMethod','numClasses','popdensOpacity',
-  'denscoverClassificationMethod','denscoverNumClasses','denscoverOpacity',
-  'maxRadius','poipopOpacity',
-  'contoursOpacity',
-  'dotSize','dotsOpacity',
-  'boundariesOpacity'
-];
-uiInputs.forEach(id => {
-  const el = document.getElementById(id);
-  if (!el) return;
-  el.addEventListener('input', () => updateLegend());
-});
-
 ['popdensToggle','denscoverToggle','poipopToggle','contoursToggle','dotsToggle','boundariesToggle'].forEach(id => {
-  document.getElementById(id).addEventListener('change', () => {
-    showHideControls();
-    updateLegend();
-  });
+  document.getElementById(id).addEventListener('change', () => { showHideControls(); updateLegend(); });
 });
 
 console.log('Thessalia Cartography Viewer - Ready');
@@ -917,3 +887,5 @@ console.log('Thessalia Cartography Viewer - Ready');
 
 </body>
 </html>
+
+
